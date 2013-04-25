@@ -184,9 +184,7 @@ bash "install-rails" do
     gem install --no-ri --no-rdoc pg sanitize right_aws json
     rake gems:install
   EOS
-  not_if <<-EOS
-    gem list rails | grep -c `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' config/environment.rb | cut -d\' -f2`
-  EOS
+  not_if "gem list rails | grep  `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' #{install_dir}/config/environment.rb | cut -d\\' -f2`"
 end
 
 include_recipe 'rake'

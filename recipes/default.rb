@@ -194,37 +194,17 @@ rake 'migrate-db' do
   arguments 'db:migrate'
 end
 
-g = gem_package "sqlite3" do
-  action :nothing
-end
-g.run_action(:install)
 
-Gem.clear_paths
 
 gem_package 'sqlite3' do
   gem_binary '/usr/bin/gem'
 end
-
-#gem_package 'sqlite3' do
-#end
 
 gem_package 'cloud-crowd' do
   gem_binary '/usr/bin/gem'
   notifies :run, "rake[cloud-crowd-server]"
 end
 
-ruby_block "configure-cloud-crowd" do
-  block do
-    require 'rubygems'; require 'sqlite3'
-    db = SQLite3::Database.new( install_dir.join('cloud_crowd.db').to_s )
-    exists = db.get_first_value( "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'" )
-    if exists.nil?
-      db.execute( "CREATE TABLE schema_migrations (Version varchar(255) NOT NULL)" )
-    end
-    db.close
-  end
-  not_if { File.exists?( install_dir.join('cloud_crowd.db') ) }
-end
 
 rake 'cloud-crowd-server' do
   user user_id
@@ -232,6 +212,26 @@ rake 'cloud-crowd-server' do
   working_directory install_dir.to_s
   notifies :run, "rake[cloud-crowd-node]"
   action :run
+  not_if { File.exists?(install_dir.join('tmp','pids','server.pid') ) }
+end
+
+ruby "configure-cloud-crowd" do
+  user user_id
+  cwd install_dir.to_s
+  code <<-EOS
+    require 'rubygems'; require 'sqlite3'; require 'cloud-crowd'
+    db = SQLite3::Database.new( 'cloud_crowd.db' )
+    exists = db.get_first_value( "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'" )
+    if exists.nil?
+      db.execute( "CREATE TABLE schema_migrations (Version varchar(255) NOT NULL)" )
+      CloudCrowd.configure("config/cloud_crowd/development/config.yml")
+      require 'cloud_crowd/models'
+      CloudCrowd.configure_database("config/cloud_crowd/development/database.yml", false)
+      require 'cloud_crowd/schema.rb'
+    end
+    db.close
+  EOS
+  not_if { File.exists?( install_dir.join('cloud_crowd.db') ) }
 end
 
 
@@ -240,4 +240,14 @@ rake 'cloud-crowd-node' do
   working_directory install_dir.to_s
   arguments 'crowd:node:start'
   action :run
+  not_if { File.exists?(install_dir.join('tmp','pids','node.pid') ) }
 end
+
+rake 'sunspot-solr' do
+  user user_id
+  working_directory install_dir.to_s
+  arguments 'sunspot:solr:start'
+  action :run
+  not_if { File.exists?(install_dir.join('tmp','pids',"sunspot-solr-#{node.documentcloud.rails_env}.pid") ) }
+end
+

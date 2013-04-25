@@ -95,7 +95,7 @@ ssh_known_hosts_entry 'github.com'
 
 git install_dir.to_s do
   repository node.documentcloud.git.repository
-  reference  node.documentcloud.git.branch
+  revision  node.documentcloud.git.branch
   user user_id
   action :checkout
 end

@@ -59,72 +59,7 @@ ruby_block "copy-server-secrets" do
   end
 end
 
-
-template "#{node['postgresql']['dir']}/pg_hba.conf" do
-  source "pg_hba.conf.erb"
-  owner "postgres"
-  group "postgres"
-  mode 00600
-  notifies :reload, 'service[postgresql]', :immediately
-end
-
-ruby_block 'setup_db' do
-
-  notifies :create, "template[#{node['postgresql']['dir']}/pg_hba.conf]", :immediately
-
-  block do
-    require 'erb'
-    require 'yaml'
-    class Rails;   def self.root;  @@root;  end    end
-    Rails.send :class_variable_set, :@@root, install_dir
-    config = YAML.load( ERB.new(File.read( install_dir.join('config','database.yml') ) ).result(binding) )[ node.documentcloud.rails_env ]
-
-#    STDERR.puts config.to_yaml
-
-    bash = Chef::Resource::Script::Bash.new('create-db-account',run_context)
-    bash.user 'postgres'
-    code =  "createuser --no-createrole --no-superuser --no-createdb #{config['username']}\n"
-    node['dbname'] = config['database']
-
-    node['postgresql']['pg_hba'] << {
-      :type => 'local', :db => config['database'], :user => config['username'], :addr => nil, :method => 'trust'
-    }
-
-    if config['password']
-      code << "psql -c \"ALTER USER #{config['username']} WITH PASSWORD '#{config['password']}'\""
-    end
-    bash.code code
-    bash.not_if  "psql -c \"\\du\" | grep #{config['username']}"
-    bash.run_action(:run)
-
-    bash = Chef::Resource::Script::Bash.new('create-database',run_context)
-    bash.user 'postgres'
-    bash.cwd install_dir.to_s
-    bash.code <<-EOS
-      createdb -O #{config['username']} #{config['database']}
-      psql #{config['database']} < db/development_structure.sql
-      tables=`psql -qAt -c "select tablename from pg_tables where schemaname = 'public';" #{config['database']}`
-      for tbl in $tables ; do
-        psql -c "alter table $tbl owner to #{config['username']}" #{config['database']};
-      done
-
-    EOS
-    bash.not_if "psql -l | grep -c #{config['database']}"
-    bash.run_action(:run)
-
-  end
-end
-
-# ruby_block 'install-rails' do
-#   block do
-#     version = `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' #{install_dir}/config/environment.rb | cut -d\\' -f2`.chomp
-#     gem = Chef::Resource::GemPackage.new('rails-gem',run_context)
-#     gem.package_name 'rails'
-#     gem.version version
-#     gem.gem_binary '/usr/bin/gem'
-#     gem.run_action :install
-#   end
-# end
+include_recipe "documentcloud::postgresql"
 
 bash "install-rails" do
   user "root"
@@ -132,6 +67,9 @@ bash "install-rails" do
   code <<-EOS
     /usr/bin/gem install --no-ri --no-rdoc rails -v `grep -E -o \'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+\' config/environment.rb | cut -d\\' -f2`
     rake gems:install
+    # nasty, but otherwise cloud crowd will complain later
+    # need to implement bundler support
+    gem uninstall rack --version '>=1.5'
   EOS
   not_if "gem list rails | grep  `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' #{install_dir}/config/environment.rb | cut -d\\' -f2`"
 end
@@ -192,4 +130,6 @@ template "/etc/motd" do
   mode   '0664'
 end
 
+# this needs to come after the source is checkout out and configured
+# nginx loads certs from the repo
 include_recipe "documentcloud::nginx"

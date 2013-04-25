@@ -194,10 +194,51 @@ include_recipe 'rake'
 rake 'migrate-db' do
   working_directory install_dir.to_s
   arguments 'db:migrate'
+end
+
+g = gem_package "sqlite3" do
+  action :nothing
+end
+g.run_action(:install)
+
+Gem.clear_paths
+
+gem_package 'sqlite3' do
+  gem_binary '/usr/bin/gem'
+end
+
+#gem_package 'sqlite3' do
+#end
+
+gem_package 'cloud-crowd' do
+  gem_binary '/usr/bin/gem'
+  notifies :run, "rake[cloud-crowd-server]"
+end
+
+ruby_block "configure-cloud-crowd" do
+  block do
+    require 'rubygems'; require 'sqlite3'
+    db = SQLite3::Database.new( install_dir.join('cloud_crowd.db').to_s )
+    exists = db.get_first_value( "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'" )
+    if exists.nil?
+      db.execute( "CREATE TABLE schema_migrations (Version varchar(255) NOT NULL)" )
+    end
+    db.close
+  end
+  not_if { File.exists?( install_dir.join('cloud_crowd.db') ) }
+end
+
+rake 'cloud-crowd-server' do
+  user user_id
+  arguments 'crowd:server:start'
+  working_directory install_dir.to_s
+  notifies :run, "rake[cloud-crowd-node]"
   action :run
 end
 
-rake 'run-cloud-crowd' do
+
+rake 'cloud-crowd-node' do
+  user user_id
   working_directory install_dir.to_s
   arguments 'crowd:node:start'
   action :run

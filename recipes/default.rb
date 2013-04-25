@@ -163,7 +163,12 @@ ruby_block 'setup_db' do
     bash.cwd install_dir.to_s
     bash.code <<-EOS
       createdb -O #{config['username']} #{config['database']}
-      psql #{config['database']} < db/development_structure.sql
+      psql -U #{config['username']} #{config['database']} < db/development_structure.sql
+      tables=`psql -qAt -c "select tablename from pg_tables where schemaname = 'public';" #{config['database']}`
+      for tbl in $tables ; do
+        psql -c "alter table $tbl owner to #{config['username']}" #{config['database']};
+      done
+
     EOS
     bash.not_if "psql -l | grep -c #{config['database']}"
     bash.run_action(:run)

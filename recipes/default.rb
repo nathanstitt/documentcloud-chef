@@ -1,100 +1,47 @@
 #
-# Cookbook Name:: documentcloud
-# Recipe:: default
+# Cookbook Name: documentcloud
+# Recipe: default
 
 include_recipe 'user'
 include_recipe 'apt'
+include_recipe 'postgresql::server'
+include_recipe 'rake'
 
-# First, remove unneeded packages
-DEPS = \
-  %w{ build-essential libcurl4-openssl-dev libssl-dev zlib1g-dev libpcre3-dev ruby1.8 rubygems        } +
-  %w{ postgresql libpq-dev git sqlite3 libsqlite3-dev libpcre3-dev lzop libxml2-dev curl         } +
-  %w{ libxslt-dev libcurl4-gnutls-dev libitext-java graphicsmagick pdftk xpdf poppler-utils   } #+
-#   %{ libreofice libreoffice-java-common tesseract-ocr ghostscript }
-DEPS.each do | pkg |
-  package pkg
-end
-
-GEMS=%w{ cloud-crowd sqlite3 pg sanitize right_aws json }.each do | gem |
-  gem_package gem do
-    gem_binary '/usr/bin/gem'
-  end
-end
-
-# %w{ eng deu spa fra chi-sim chi-tra }.each do | language_code |
-#   package 'tesseract-ocr-' + language_code
-# end
-
-# Install passenger
-gem_package 'passenger' do
-  gem_binary '/usr/bin/gem'
-  action :upgrade
-  if node['nginx']['passenger']['version']
-    version node['nginx']['passenger']['version']
-  end
-end
-
-nginx_path  = Pathname.new node[:nginx][:install_path]
-nginx_conf  = nginx_path.join( 'conf','nginx.conf' )
+# Variables from config
 install_dir = Pathname.new node[:documentcloud][:directory]
 user_id     = node[:account][:login]
 
+# Apt packages
+DEBS=\
+  %w{ build-essential libcurl4-openssl-dev libssl-dev zlib1g-dev libpcre3-dev ruby1.8 rubygems } +
+  %w{ postgresql libpq-dev git sqlite3 libsqlite3-dev libpcre3-dev lzop libxml2-dev curl       } +
+  %w{ libxslt-dev libcurl4-gnutls-dev libitext-java graphicsmagick pdftk xpdf poppler-utils    } +
+  %w{ libreoffice libreoffice-java-common tesseract-ocr ghostscript                            }
+DEBS.each do | pkg |
+  package pkg
+end
 
-bash "install passenger/nginx" do
-  user "root"
-  code "passenger-install-nginx-module --auto --auto-download --prefix=#{nginx_path}  --extra-configure-flags='#{node[:nginx][:config_flags]}'"
-  not_if do
-    File.exists?( nginx_conf )
+# Tesseract language packs
+%w{ eng deu spa fra chi-sim chi-tra }.each do | language_code |
+  package 'tesseract-ocr-' + language_code
+end
+
+# Ruby Gems
+%w{ cloud-crowd sqlite3 pg sanitize right_aws json passenger }.each do | gem |
+  gem_package gem do
+    gem_binary '/usr/bin/gem'
+    if node['gems'][ gem ] && node['gems']['version']
+      version node['gems'][ gem ]['version']
+    end
   end
 end
 
-FileUtils.mkdir_p "#{nginx_path}/conf/sites-enabled"
 
-template nginx_conf.to_s do
-  source 'nginx.conf.erb'
-  mode   '0664'
-  variables(
-    :passenger_root => lambda{ `passenger-config --root`.chomp },
-    :passenger_ruby_path => lambda{ '/usr/bin/ruby' }
-    )
-  notifies :enable, "service[nginx]"
-  notifies :start, "service[nginx]"
-end
-
-service "nginx" do
-  supports :restart => true, :start => true, :stop => true, :reload => true
-  action :nothing
-end
-
-template '/etc/init.d/nginx' do
-  source 'nginx.init.erb'
-  mode   '0711'
-end
-
-template nginx_path.join('conf','sites-enabled','default.conf').to_s do
-  source 'nginx_site.conf.erb'
-  mode   '0664'
-  notifies :enable, "service[nginx]"
-  notifies :start, "service[nginx]"
-end
-template nginx_path.join('conf','documentcloud.conf').to_s do
-  source 'documentcloud.conf.erb'
-  mode   '0664'
-  notifies :enable, "service[nginx]"
-  notifies :start, "service[nginx]"
-end
-
-template "/etc/motd.tail" do
-  source 'motd.tail.erb'
-  owner  'root'
-  mode   '0664'
-end
-
-user_account 'Document Cloud User Account' do
+user_account 'user-account' do
   username     user_id
   create_group true
   ssh_keygen   true
-  ssh_keys     node[:account][:ssh_keys]
+  ssh_keys     node[:account][:ssh_keys] if node.account.ssh_keys
 end
 
 ssh_known_hosts_entry 'github.com'
@@ -108,24 +55,10 @@ end
 
 ruby_block "copy-server-secrets" do
   block do
-    require 'fileutils'
     FileUtils.cp_r( install_dir.join('config','server','secrets'), install_dir ) unless install_dir.join('secrets').exist?
   end
 end
 
-
-
-directory node.nginx.log_directory do
-  owner node[:nginx][:user]
-  group node[:nginx][:group]
-  mode 0644
-  action :create
-  not_if do
-    File.exists?( node.nginx.log_directory )
-  end
-end
-
-include_recipe 'postgresql::server'
 
 template "#{node['postgresql']['dir']}/pg_hba.conf" do
   source "pg_hba.conf.erb"
@@ -182,6 +115,17 @@ ruby_block 'setup_db' do
   end
 end
 
+# ruby_block 'install-rails' do
+#   block do
+#     version = `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' #{install_dir}/config/environment.rb | cut -d\\' -f2`.chomp
+#     gem = Chef::Resource::GemPackage.new('rails-gem',run_context)
+#     gem.package_name 'rails'
+#     gem.version version
+#     gem.gem_binary '/usr/bin/gem'
+#     gem.run_action :install
+#   end
+# end
+
 bash "install-rails" do
   user "root"
   cwd install_dir.to_s
@@ -191,8 +135,6 @@ bash "install-rails" do
   EOS
   not_if "gem list rails | grep  `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' #{install_dir}/config/environment.rb | cut -d\\' -f2`"
 end
-
-include_recipe 'rake'
 
 rake 'migrate-db' do
   working_directory install_dir.to_s
@@ -243,3 +185,11 @@ rake 'sunspot-solr' do
   action :run
   not_if { File.exists?(install_dir.join('tmp','pids',"sunspot-solr-#{node.documentcloud.rails_env}.pid") ) }
 end
+
+template "/etc/motd" do
+  source 'motd.erb'
+  owner  'root'
+  mode   '0664'
+end
+
+include_recipe "documentcloud::nginx"

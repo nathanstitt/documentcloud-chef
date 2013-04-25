@@ -15,6 +15,12 @@ DEPS.each do | pkg |
   package pkg
 end
 
+GEMS=%w{ cloud-crowd sqlite3 pg sanitize right_aws json }.each do | gem |
+  gem_package gem do
+    gem_binary '/usr/bin/gem'
+  end
+end
+
 # %w{ eng deu spa fra chi-sim chi-tra }.each do | language_code |
 #   package 'tesseract-ocr-' + language_code
 # end
@@ -181,7 +187,6 @@ bash "install-rails" do
   cwd install_dir.to_s
   code <<-EOS
     /usr/bin/gem install --no-ri --no-rdoc rails -v `grep -E -o \'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+\' config/environment.rb | cut -d\\' -f2`
-    gem install --no-ri --no-rdoc pg sanitize right_aws json
     rake gems:install
   EOS
   not_if "gem list rails | grep  `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' #{install_dir}/config/environment.rb | cut -d\\' -f2`"
@@ -193,18 +198,6 @@ rake 'migrate-db' do
   working_directory install_dir.to_s
   arguments 'db:migrate'
 end
-
-
-
-gem_package 'sqlite3' do
-  gem_binary '/usr/bin/gem'
-end
-
-gem_package 'cloud-crowd' do
-  gem_binary '/usr/bin/gem'
-  notifies :run, "rake[cloud-crowd-server]"
-end
-
 
 rake 'cloud-crowd-server' do
   user user_id
@@ -250,4 +243,3 @@ rake 'sunspot-solr' do
   action :run
   not_if { File.exists?(install_dir.join('tmp','pids',"sunspot-solr-#{node.documentcloud.rails_env}.pid") ) }
 end
-

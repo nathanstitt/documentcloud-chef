@@ -180,16 +180,25 @@ bash "install-rails" do
   user "root"
   cwd install_dir.to_s
   code <<-EOS
-    /usr/bin/gem install rails -v `grep -E -o \'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+\' config/environment.rb | cut -d\\' -f2`
-    gem install pg sanitize right_aws json
+    /usr/bin/gem install --no-ri --no-rdoc rails -v `grep -E -o \'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+\' config/environment.rb | cut -d\\' -f2`
+    gem install --no-ri --no-rdoc pg sanitize right_aws json
     rake gems:install
-    rake db:migrate
   EOS
-  not_if {  File.exists?('/usr/local/bin/rails') }
+  not_if <<-EOS
+    gem list rails | grep -c `grep -E -o 'RAILS_GEM_VERSION.*[0-9]+\.[0-9]+\.[0-9]+' config/environment.rb | cut -d\' -f2`
+  EOS
 end
 
+include_recipe 'rake'
 
-rake :run-cloud-crowd' do
+rake 'migrate-db' do
   working_directory install_dir.to_s
+  arguments 'db:migrate'
+  action :run
+end
+
+rake 'run-cloud-crowd' do
+  working_directory install_dir.to_s
+  arguments 'crowd:node:start'
   action :run
 end
